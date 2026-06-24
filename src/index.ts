@@ -1,8 +1,8 @@
 // src/index.ts
 import { Client, GatewayIntentBits, Message } from 'discord.js';
 import 'dotenv/config';
+import { extractTextFromUrl, parseOcrTable } from './services/parser.js';
 
-// Initialize the Discord Client with required permissions
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -11,9 +11,8 @@ const client = new Client({
   ]
 });
 
-// Triggers once when the bot successfully logs in
 client.once('ready', (readyClient) => {
-  console.log(`✅ Success! Bot is online and logged in as: ${readyClient.user.tag}`);
+  console.log(`✅ Success! Parser Testing Bot is online as: ${readyClient.user.tag}`);
 });
 
 client.on('messageCreate', async (message: Message): Promise<void> => {
@@ -21,42 +20,71 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
 
   const command = message.content.toLowerCase().trim();
 
-  // Handle the !submit command
-  if (command.startsWith('!submit')) {
-    // Look for the first file attached to the user's message
-    const attachment = message.attachments.first();
-
-    // 1. Guard Clause: Verify an attachment actually exists
-    if (!attachment) {
-      await message.reply('❌ Please attach your postgame screenshot when using the `!submit` command.');
-      return;
-    }
-
-    // 2. Guard Clause: Check if the file type is an image
-    // The contentType will look like 'image/png' or 'image/jpeg'
-    const isImage = attachment.contentType?.startsWith('image/');
-    if (!isImage) {
-      await message.reply('❌ The attached file must be an image (PNG or JPEG).');
-      return;
-    }
-
-    // 3. Extract the image URL hosted on Discord's CDN servers
-    const imageUrl = attachment.url;
-
-    // Temporal response confirming the bot grabbed the file link successfully
-    await message.reply(`📸 Image detected! I successfully found the image file: **${attachment.name}**.\nURL link: <${imageUrl}>`);
-    
-    // TODO: Phase 3 will send this imageUrl directly to the OCR.space API
+  if (command === '!ping') {
+    await message.reply('🏓 Pong! Bot is listening.');
+    return;
   }
 
-  if (command === '!ping') {
-    await message.reply('🏓 Pong!');
+  // Parsed Stats Test
+  if (command.startsWith('!submit')) {
+    const attachment = message.attachments.first();
+
+    if (!attachment) {
+      await message.reply('❌ Please attach a screenshot file alongside your `!submit` command.');
+      return;
+    }
+
+    const isImage = attachment.contentType?.startsWith('image/');
+    if (!isImage) {
+      await message.reply('❌ The attached file must be an image format (PNG or JPEG).');
+      return;
+    }
+
+    const statusMessage = await message.reply('⏳ Step 1/2: Extracting text via OCR.space...');
+
+    try {
+      // 1. Extract the raw text from the image URL
+      const rawTextOutput = await extractTextFromUrl(attachment.url);
+      
+      await statusMessage.edit('⏳ Step 2/2: Feeding text into the sliding-window parser...');
+
+      // 2. Parse the text using our tokenizing algorithm
+      const parsedPlayers = parseOcrTable(rawTextOutput);
+
+      // 3. Format the structured output array nicely for Discord
+      if (parsedPlayers.length === 0) {
+        await statusMessage.edit('⚠️ OCR ran successfully, but the parser couldn\'t find any player stats matching the expected score windows.');
+        return;
+      }
+
+      let responseLines = ['✅ **Successfully Parsed Player Stats!**\n'];
+      
+      parsedPlayers.forEach((player) => {
+        responseLines.push(
+          `👤 **${player.username}**` +
+          `\n   ↳ Goals: \`${player.goals}\` | Assists: \`${player.assists}\` | Passes: \`${player.passes}\` | Interceptions: \`${player.interceptions}\` | Saves: \`${player.saves}\``
+        );
+      });
+
+      const finalResponse = responseLines.join('\n');
+      
+      // If the message is somehow too long for Discord's 2000 character limit, wrap it safe
+      if (finalResponse.length > 2000) {
+        await statusMessage.edit('✅ Stats parsed! (Output too long for standard text, printing fallback JSON):');
+        await message.channel.send(`\`\`\`json\n${JSON.stringify(parsedPlayers, null, 2)}\n\`\`\``);
+      } else {
+        await statusMessage.edit(finalResponse);
+      }
+
+    } catch (error) {
+      console.error('Parser Test Failed:', error);
+      await statusMessage.edit('❌ Failed to process match screenshot. Check your local console logs.');
+    }
   }
 });
 
-// Safely log the bot in using your token
 if (!process.env.DISCORD_TOKEN) {
-  console.error('❌ Error: DISCORD_TOKEN is missing in your .env file!');
+  console.error('❌ Error: DISCORD_TOKEN is missing inside your .env file!');
   process.exit(1);
 }
 
