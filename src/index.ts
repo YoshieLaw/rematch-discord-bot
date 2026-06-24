@@ -16,14 +16,41 @@ client.once('ready', (readyClient) => {
   console.log(`✅ Success! Bot is online and logged in as: ${readyClient.user.tag}`);
 });
 
-// Triggers whenever someone sends a text message
 client.on('messageCreate', async (message: Message): Promise<void> => {
-  // Ignore bots to avoid infinite response loops
   if (message.author.bot) return;
 
-  // Simple ping-pong check
-  if (message.content.toLowerCase() === '!ping') {
-    await message.reply('🏓 Pong! TypeScript environment is responding perfectly.');
+  const command = message.content.toLowerCase().trim();
+
+  // Handle the !submit command
+  if (command.startsWith('!submit')) {
+    // Look for the first file attached to the user's message
+    const attachment = message.attachments.first();
+
+    // 1. Guard Clause: Verify an attachment actually exists
+    if (!attachment) {
+      await message.reply('❌ Please attach your postgame screenshot when using the `!submit` command.');
+      return;
+    }
+
+    // 2. Guard Clause: Check if the file type is an image
+    // The contentType will look like 'image/png' or 'image/jpeg'
+    const isImage = attachment.contentType?.startsWith('image/');
+    if (!isImage) {
+      await message.reply('❌ The attached file must be an image (PNG or JPEG).');
+      return;
+    }
+
+    // 3. Extract the image URL hosted on Discord's CDN servers
+    const imageUrl = attachment.url;
+
+    // Temporal response confirming the bot grabbed the file link successfully
+    await message.reply(`📸 Image detected! I successfully found the image file: **${attachment.name}**.\nURL link: <${imageUrl}>`);
+    
+    // TODO: Phase 3 will send this imageUrl directly to the OCR.space API
+  }
+
+  if (command === '!ping') {
+    await message.reply('🏓 Pong!');
   }
 });
 
