@@ -1,49 +1,5 @@
-// src/parser.ts
-import axios from 'axios';
-import FormData from 'form-data';
 import { PlayerStats } from '../entity/player_stats.js';
 
-/**
- * Sends a hosted image URL to the OCR.space API and returns the raw parsed text.
- * @param imageUrl The Discord CDN attachment URL string
- */
-export async function extractTextFromUrl(imageUrl: string): Promise<string> {
-  const apiKey = process.env.OCR_SPACE_KEY;
-  
-  if (!apiKey) {
-    throw new Error('Missing OCR_SPACE_KEY in your environment variables.');
-  }
-
-  try {
-    const form = new FormData();
-    // Fields come from https://ocr.space/ocrapi
-    form.append('apikey', apiKey);
-    form.append('url', imageUrl);
-    form.append('isOverlayRequired', 'false');
-    form.append('scale', 'true'); // Upscales image internally to improve digit recognition accuracy
-    form.append('isTable', 'true'); // Crucial: Tells the engine to recognize tabular grids
-    form.append('OCREngine', '3'); // Enable Engine 3 for advanced table/markdown translation layout
-    form.append('isCreateSearchablePdf', 'true'); // Enable Searchable PDF Layer configuration
-
-    // Send POST request to OCR.space endpoint
-    const response = await axios.post('https://api.ocr.space/parse/image', form, {
-      headers: form.getHeaders(),
-    });
-
-    // Check if the API itself threw an operational error
-    if (response.data.OCRExitCode !== 1) {
-      throw new Error(`OCR Space Error: ${response.data.ErrorMessage || 'Unknown processing error'}`);
-    }
-
-    // Grab the parsed raw text output string from the response structure
-    const rawText: string = response.data.ParsedResults[0].ParsedText;
-    return rawText;
-    
-  } catch (error) {
-    console.error('Failed to communicate with OCR.space:', error);
-    throw error;
-  }
-}
 
 /**
  * Parses the text output string from OCR Space into structured player objects.

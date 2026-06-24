@@ -1,7 +1,12 @@
 // src/index.ts
 import { Client, GatewayIntentBits, Message } from 'discord.js';
 import 'dotenv/config';
-import { extractTextFromUrl, parseOcrTable } from './services/parser.js';
+import { parseOcrTable } from './services/parser.js';
+import { OcrDataProvider } from './services/DataProvider/ocrProvider.js';
+
+
+// Instantiate the provider service once at system boot
+const ocrProvider = new OcrDataProvider();
 
 const client = new Client({
   intents: [
@@ -37,7 +42,7 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
 
     try {
       // 1. Extract the raw text directly from the API response
-      const rawTextOutput = await extractTextFromUrl(attachment.url);
+      const rawTextOutput = await ocrProvider.extractTextFromUrl(attachment.url);
       
       await statusMessage.edit('⏳ Step 2/2: Mapping tokens through parser implementation...');
 
@@ -45,14 +50,12 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
       const parsedPlayers = parseOcrTable(rawTextOutput);
 
       // 3. Construct the dual comparison payload blocks
-      const rawTextSegment = `📝 **RAW OCR SPACE API RESPONSE:**\n\`\`\`text\n${rawTextOutput || '[Empty String Returned]'}\n\`\`\``;
       const parsedJsonSegment = `📊 **POST-PARSED RESULT OBJECTS ARRAY:**\n\`\`\`json\n${JSON.stringify(parsedPlayers, null, 2)}\n\`\`\``;
 
       // Clean up the initial status message wrapper
       await statusMessage.delete().catch(() => {});
 
       // Send the raw data blocks sequentially to bypass Discord's 2000 character limit ceiling safely
-      await message.channel.send(rawTextSegment);
       await message.channel.send(parsedJsonSegment);
 
     } catch (error) {
