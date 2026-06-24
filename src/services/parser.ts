@@ -7,12 +7,28 @@ import { PlayerStats } from '../entity/player_stats.js';
  */
 export function parseOcrTable(tableText: string): PlayerStats[] {
   // 1. Fix fused prefix issues from tight column boundaries (e.g., "BARTotally" -> "BAR Totally")
+  // let preCleanedText = tableText
+  //   .replace(/\bBAR(?=[A-Z0-9])/g, 'BAR ')
+  //   .replace(/\bGŁ(?=[0-9])/g, 'GŁ ')
+  //   .replace(/\|/g, ' ')
+  //   .replace(/\s+/g, ' ')
+  //   .trim();
+
+  // 1. Isolate and split common OCR fusions generically using lookarounds
   let preCleanedText = tableText
-    .replace(/\bBAR(?=[A-Z0-9])/g, 'BAR ')
-    .replace(/\bGŁ(?=[0-9])/g, 'GŁ ')
-    .replace(/\|/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // Case 1: Split uppercase acronyms/team tags smashed against names (e.g., "BARAllauni" -> "BAR Allauni")
+  // Looks for an uppercase boundary right before an uppercase letter followed by lowercase letters
+  .replace(/([A-Z]{2,})([A-Z][a-z])/g, '$1 $2')
+
+  // Case 2: Split alphanumeric fusions generically (e.g., "GŁ69" -> "GŁ 69", "Player123" -> "Player 123")
+  // Inserts a space between any letter and any digit, or vice-versa
+  .replace(/([a-zA-Z\u00C0-\u017F])([0-9])/g, '$1 $2')
+  .replace(/([0-9])([a-zA-Z\u00C0-\u017F])/g, '$1 $2')
+
+  // Case 3: Clean layout artifacts and normalize spaces
+  .replace(/\|/g, ' ')      // Turn table pipes into spaces
+  .replace(/\s+/g, ' ')     // Collapse multi-spaces/newlines down to single spaces
+  .trim();
 
   const tokens = preCleanedText.split(' ');
   const playersData: PlayerStats[] = [];
