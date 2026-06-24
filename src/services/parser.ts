@@ -46,129 +46,116 @@ export async function extractTextFromUrl(imageUrl: string): Promise<string> {
 }
 
 /**
- * Parses the Markdown or unstructured text output string from OCR Space into structured player objects.
+ * Parses the text output string from OCR Space into structured player objects.
  * @param tableText Raw text string containing the player data layout
  */
 export function parseOcrTable(tableText: string): PlayerStats[] {
   // 1. Fix fused prefix issues from tight column boundaries (e.g., "BARTotally" -> "BAR Totally")
   let preCleanedText = tableText
-    .replace(/\bBAR(?=[A-Z0-9])/g, 'BAR ') // Inserts space if BAR is smashed against a name
-    .replace(/\bGŁ(?=[0-9])/g, 'GŁ ');    // Inserts space if GŁ is smashed against a jersey number
+    .replace(/\bBAR(?=[A-Z0-9])/g, 'BAR ')
+    .replace(/\bGŁ(?=[0-9])/g, 'GŁ ')
+    .replace(/\|/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  // 2. Strip markdown pipes and flatten all newlines/spaces into one massive array of pure data tokens
-  const cleanText = preCleanedText.replace(/\|/g, ' ').replace(/\s+/g, ' ').trim();
-  const tokens = cleanText.split(' ');
+  const tokens = preCleanedText.split(' ');
   const playersData: PlayerStats[] = [];
 
-  let i = 0;
-  while (i < tokens.length) {
+  // Loop through tokens to find score milestones
+  for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    
-    // Check if the current token is a final score (a number usually between 100 and 25000)
-    // and make sure it's not part of the 'Total match' summary lines
     const isScore = /^\d[\d,]*$/.test(token);
     const scoreVal = parseInt(token.replace(/,/g, ''), 10);
     
+    // Core player scores are between 100 and 25000
     if (isScore && scoreVal >= 100 && scoreVal <= 25000) {
-      // Look backward from the score index to ensure we don't accidentally grab a 'Total' summary block
+      
+      // Filter out 'Total match' score summaries by scanning 8 tokens back
       let isTotalMatch = false;
-      for (let check = Math.max(0, i - 15); check < i; check++) {
+      for (let check = Math.max(0, i - 8); check < i; check++) {
         if (tokens[check]?.toLowerCase() === 'total' || tokens[check]?.toLowerCase() === 'match') {
           isTotalMatch = true;
           break;
         }
       }
+      
+      if (isTotalMatch) continue;
 
-      if (!isTotalMatch) {
-        try {
-          // Collect numeric tokens backward to find the 5 core game metrics
-          const numericStats: number[] = [];
-          let searchIdx = i - 1;
+      try {
+        // Collect exactly the 5 numeric game stats right before this score milestone
+        const numericStats: number[] = [];
+        let walkIdx = i - 1;
+
+        while (walkIdx >= 0 && numericStats.length < 5) {
+          const currentTok = tokens[walkIdx];
           
-          // Step backward and collect up to 5 valid numbers for stats
-          while (searchIdx >= 0 && numericStats.length < 5) {
-            const currentToken = tokens[searchIdx];
-            // If we run into a major section header or column label, stop stat hunting
+          // Only stop hunting stats if we hit hard macro team/match boundaries
+          if (['HOME', 'AWAY', 'VICTORY', 'DEFEAT', 'TOTAL', 'MATCH'].includes(currentTok.toUpperCase())) {
+            break;
+          }
+
+          if (/^\d+$/.test(currentTok)) {
+            numericStats.unshift(parseInt(currentTok, 10));
+          }
+          walkIdx--;
+        }
+
+        // If we successfully found the 5 core performance metrics, process the player name
+        if (numericStats.length === 5) {
+          const goals = numericStats[0];
+          const assists = numericStats[1];
+          const passes = numericStats[2];
+          const interceptions = numericStats[3];
+          const saves = numericStats[4];
+
+          // The name starts to the left of the collected stats index
+          let nameEndIdx = walkIdx;
+
+          // Bypass an isolated single-or-double digit jersey number if present right before stats
+          const potentialJersey = tokens[nameEndIdx];
+          if (potentialJersey && /^\d+$/.test(potentialJersey) && potentialJersey.length <= 2) {
+            nameEndIdx--;
+          }
+
+          // Gather name parts going backward until running into previous scores or clear team blocks
+          let nameStartIdx = nameEndIdx;
+          while (nameStartIdx > 0) {
+            const prevToken = tokens[nameStartIdx - 1];
+            const prevTokenIsNum = /^\d[\d,]*$/.test(prevToken);
+            const prevTokenVal = parseInt(prevToken.replace(/,/g, ''), 10);
+
             if (
-              currentToken.toUpperCase() === 'HOME' || 
-              currentToken.toUpperCase() === 'AWAY' || 
-              currentToken.toUpperCase() === 'SCORE'
+              (prevTokenIsNum && prevTokenVal >= 100) || 
+              ['HOME', 'AWAY', 'VICTORY', 'DEFEAT', 'TOTAL', 'MATCH'].includes(prevToken.toUpperCase()) ||
+              prevToken.includes('>')
             ) {
               break;
             }
-            
-            // If it's a pure digit stat line, record it
-            if (/^\d+$/.test(currentToken)) {
-              numericStats.unshift(parseInt(currentToken, 10));
-            }
-            searchIdx--;
+            nameStartIdx--;
           }
 
-          // We must have exactly 5 stats extracted (Goals, Assists, Passes, Interceptions, Saves)
-          if (numericStats.length === 5) {
-            const goals = numericStats[0];
-            const assists = numericStats[1];
-            const passes = numericStats[2];
-            const interceptions = numericStats[3];
-            const saves = numericStats[4];
+          // Filter out header labels if they bleed into the player name tokens array slice
+          const nameTokens = tokens.slice(nameStartIdx, nameEndIdx + 1).filter(tok => {
+            return !['>', 'HOME', 'AWAY', 'VICTORY', 'DEFEAT', 'GOAL', 'ASSIST', 'PASS', 'INTERCEPTION', 'SAVE', 'SCORE'].includes(tok.toUpperCase());
+          });
 
-            // The remaining text to the left of our furthest stat token belongs to the name
-            let nameEndIdx = searchIdx;
+          const rawName = nameTokens.join(' ');
+          const username = rawName.replace(/\s*mvp\s*★?/i, '').replace(/★/g, '').trim();
 
-            // Check for a single-digit jersey number marker standing right before the stats window
-            const potentialJersey = tokens[nameEndIdx];
-            if (potentialJersey && /^\d+$/.test(potentialJersey) && potentialJersey.length === 1) {
-              nameEndIdx--; 
-            }
-
-            // Gather everything left backward until we hit either another score value or a team header
-            let nameStartIdx = nameEndIdx;
-            while (nameStartIdx > 0) {
-              const prevToken = tokens[nameStartIdx - 1];
-              const prevTokenIsNum = /^\d[\d,]*$/.test(prevToken);
-              const prevTokenVal = parseInt(prevToken.replace(/,/g, ''), 10);
-              
-              // Stop gathering username words if we run into headers, labels, or other scores
-              if (
-                (prevTokenIsNum && prevTokenVal >= 100) || 
-                prevToken.toUpperCase() === 'HOME' || 
-                prevToken.toUpperCase() === 'AWAY' ||
-                prevToken.toUpperCase() === 'VICTORY' ||
-                prevToken.toUpperCase() === 'DEFEAT' ||
-                prevToken.toUpperCase() === 'GOAL' ||
-                prevToken.toUpperCase() === 'ASSIST' ||
-                prevToken.toUpperCase() === 'PASS' ||
-                prevToken.toUpperCase() === 'INTERCEPTION' ||
-                prevToken.toUpperCase() === 'SAVE' ||
-                prevToken.toUpperCase() === 'SCORE'
-              ) {
-                break;
-              }
-              nameStartIdx--;
-            }
-
-            // Piece the username tokens together cleanly
-            const rawName = tokens.slice(nameStartIdx, nameEndIdx + 1).join(' ');
-            
-            // Clean out both trailing MVP text tags and loose star icons seamlessly
-            const username = rawName.replace(/\s*mvp\s*★?/i, '').replace(/★/g, '').trim();
-
-            // Prevent empty lines or leaked static boilerplate columns
-            if (
-              username !== '' && 
-              username.toLowerCase() !== 'player' && 
-              username.toLowerCase() !== 'score' &&
-              username.toLowerCase() !== 'save'
-            ) {
-              playersData.push({ username, goals, assists, passes, interceptions, saves });
-            }
+          // Reject boilerplate structural noise and summary rows explicitly
+          if (
+            username && 
+            username.toLowerCase() !== 'player' && 
+            username.toLowerCase() !== 'match' && 
+            username.toLowerCase() !== 'total'
+          ) {
+            playersData.push({ username, goals, assists, passes, interceptions, saves });
           }
-        } catch (err) {
-          console.error('Token slicing window boundary fault skipped a line:', err);
         }
+      } catch (err) {
+        console.error('Failed backward processing on player milestone:', err);
       }
     }
-    i++;
   }
 
   return playersData;

@@ -28,57 +28,36 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
   // Parsed Stats Test
   if (command.startsWith('!submit')) {
     const attachment = message.attachments.first();
-
-    if (!attachment) {
+    if (!attachment || !attachment.contentType?.startsWith('image/')) {
       await message.reply('❌ Please attach a screenshot file alongside your `!submit` command.');
       return;
     }
 
-    const isImage = attachment.contentType?.startsWith('image/');
-    if (!isImage) {
-      await message.reply('❌ The attached file must be an image format (PNG or JPEG).');
-      return;
-    }
-
-    const statusMessage = await message.reply('⏳ Step 1/2: Extracting text via OCR.space...');
+    const statusMessage = await message.reply('⏳ Step 1/2: Fetching raw OCR text matrix...');
 
     try {
-      // 1. Extract the raw text from the image URL
+      // 1. Extract the raw text directly from the API response
       const rawTextOutput = await extractTextFromUrl(attachment.url);
       
-      await statusMessage.edit('⏳ Step 2/2: Feeding text into the sliding-window parser...');
+      await statusMessage.edit('⏳ Step 2/2: Mapping tokens through parser implementation...');
 
-      // 2. Parse the text using our tokenizing algorithm
+      // 2. Pass the text to your sliding-window parsing logic
       const parsedPlayers = parseOcrTable(rawTextOutput);
 
-      // 3. Format the structured output array nicely for Discord
-      if (parsedPlayers.length === 0) {
-        await statusMessage.edit('⚠️ OCR ran successfully, but the parser couldn\'t find any player stats matching the expected score windows.');
-        return;
-      }
+      // 3. Construct the dual comparison payload blocks
+      const rawTextSegment = `📝 **RAW OCR SPACE API RESPONSE:**\n\`\`\`text\n${rawTextOutput || '[Empty String Returned]'}\n\`\`\``;
+      const parsedJsonSegment = `📊 **POST-PARSED RESULT OBJECTS ARRAY:**\n\`\`\`json\n${JSON.stringify(parsedPlayers, null, 2)}\n\`\`\``;
 
-      let responseLines = ['✅ **Successfully Parsed Player Stats!**\n'];
-      
-      parsedPlayers.forEach((player) => {
-        responseLines.push(
-          `👤 **${player.username}**` +
-          `\n   ↳ Goals: \`${player.goals}\` | Assists: \`${player.assists}\` | Passes: \`${player.passes}\` | Interceptions: \`${player.interceptions}\` | Saves: \`${player.saves}\``
-        );
-      });
+      // Clean up the initial status message wrapper
+      await statusMessage.delete().catch(() => {});
 
-      const finalResponse = responseLines.join('\n');
-      
-      // If the message is somehow too long for Discord's 2000 character limit, wrap it safe
-      if (finalResponse.length > 2000) {
-        await statusMessage.edit('✅ Stats parsed! (Output too long for standard text, printing fallback JSON):');
-        await message.channel.send(`\`\`\`json\n${JSON.stringify(parsedPlayers, null, 2)}\n\`\`\``);
-      } else {
-        await statusMessage.edit(finalResponse);
-      }
+      // Send the raw data blocks sequentially to bypass Discord's 2000 character limit ceiling safely
+      await message.channel.send(rawTextSegment);
+      await message.channel.send(parsedJsonSegment);
 
     } catch (error) {
-      console.error('Parser Test Failed:', error);
-      await statusMessage.edit('❌ Failed to process match screenshot. Check your local console logs.');
+      console.error('Manual comparison execution failed:', error);
+      await statusMessage.edit('❌ Processing failed. Check your local application console logs.');
     }
   }
 });
