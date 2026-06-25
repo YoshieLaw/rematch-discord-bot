@@ -4,6 +4,26 @@ A TypeScript-powered Discord Bot that extracts end-of-match stats from game scre
 
 ---
 
+## 🕹️ Discord Bot Commands
+
+All commands use the `!` prefix. Make sure parameters are separated by clean single spaces.
+
+| Command | Arguments | Description | Example Usage |
+| :--- | :--- | :--- | :--- |
+| **`!register`** | `<@User/DiscordID>` `<PlayerID>` | Links a physical Discord user profile/snowflake to a master numerical sequential Player ID. | `!register @velops 23` |
+| **`!nickname`** | `<Identifier>` `<Nicknames...>` | Appends one or many unique string aliases to a profile (accepts Player ID or Discord Snowflake). | `!nickname 23 barvelops velopsgk` |
+| **`!submit`** | *(Requires Image Attachment)* | Uploads, validates, hashes, and parses score match screenshots through the OCR pipeline. | `!submit` *(with attached image)* |
+| **`!leaderboard`** | `[metric]` | Renders a fixed monospace leaderboard grid of the top 15 players. Defaults to **goals**. | `!leaderboard assists` |
+
+### 📊 Leaderboard Filtering Metrics
+When calling the `!leaderboard` command, you can pass an optional secondary argument to re-sort the career statistics standings. The following filtering tokens are fully supported:
+
+* `goals` *(Default)*
+* `assists`
+* `saves`
+* `passes`
+* `interceptions`
+
 ## 🛠️ Step 1: Get Your API Tokens
 
 ### 1. Discord Bot Token
