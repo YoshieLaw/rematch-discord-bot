@@ -11,7 +11,6 @@ import { PlayerService } from './services/playerService.js';
 import { ImageProcessingService } from './services/imageProcessingService.js';
 import { connectDatabase } from './services/db.js';
 import { Match } from './entity/match.js';
-import { match } from 'assert';
 
 // Initialize our repository management pool
 const matchRepo = new MatchRepository();
@@ -151,6 +150,51 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
       }
     }
   }
+
+  // Register Discord Profile to Player ID command
+  if (command.startsWith('!register')) {
+    // 1. Remove the prefix and separate the command and arguments
+    const args = message.content.slice(1).trim().split(/ +/);
+
+    if (args.length !== 3) {
+      await message.reply('❌ Please make sure there are only 2 parameters passed into the `!register` command.');
+      return;
+    }
+    const discordInput:string = args[1];
+    const playerIdInput: number = parseInt(args[2], 10);
+
+    // 2. Extract raw Discord ID if they used an @mention (looks like <@123456789>)
+    const discordIdRegex = /^<@!?(\d+)>$/;
+    const match = discordInput.match(discordIdRegex);
+    const targetDiscordId = match ? match[1] : discordInput;
+
+
+    // 3. Validation Guardrails
+    if (!/^\d+$/.test(targetDiscordId)) {
+      await message.reply('❌ **Error:** The first parameter must be a valid Discord mention or a raw numeric user ID.');
+      return;
+    }
+
+    if (isNaN(playerIdInput)) {
+      await message.reply('❌ **Error:** The player ID must be a valid number.');
+      return;
+    }
+
+    try {
+      // 4. Pass the extracted parameters straight into your PlayerService logic
+      const result = await playerService.registerDiscordProfile(playerIdInput, targetDiscordId);
+
+      if (result.isNew) {
+        await message.reply(`🆕 **Profile Created:** Generated a new player profile for ID \`${playerIdInput}\` and linked it to <@${targetDiscordId}>.`);
+      } else {
+        await message.reply(`✅ **Profile Linked:** Player ID \`${playerIdInput}\` has been successfully updated to point to <@${targetDiscordId}>.`);
+      }
+    } catch (error) {
+      console.error('Failed to register Discord profile link:', error);
+      await message.reply('❌ An internal database error occurred while trying to save the registration.');
+    }
+  }
+  
 });
 
 if (!process.env.DISCORD_TOKEN) {

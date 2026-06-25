@@ -1,4 +1,3 @@
-// src/service/playerService.ts
 import { PlayerProfileRepository } from '../repository/playerprofile_repository.js';
 import { NicknameMappingRepository } from '../repository/nickname_repository.js';
 import { getDb } from '../services/db.js';
@@ -25,7 +24,7 @@ export class PlayerService {
       const normalizedNick = cleanName.toLowerCase().trim();
       // If name is invalid or empty, skip it
       if (!normalizedNick) continue;
-      
+
       // 2. Query our inverted lookup table to find an existing Master Player ID
       let playerId = await this.nicknameRepo.findPlayerId(normalizedNick);
 
@@ -96,5 +95,47 @@ export class PlayerService {
     }
 
     return result.seq;
+  }
+
+  /**
+   * Links a Discord Profile ID to an existing Player ID.
+   * If the player ID is not found, it initializes a brand-new profile document.
+   * 
+   * @param playerId The unique numeric ID assigned to the player profile
+   * @param discordId The raw numeric string ID of the Discord account
+   * @returns An object indicating if a new profile was created, along with the action status.
+   */
+  async registerDiscordProfile(playerId: number, discordId: string): Promise<{ isNew: boolean }> {
+    // 1. Check if a profile already exists for this numeric ID
+    // Note: Assuming your repository exposes a method like findById, or you can query it via your DB handler
+    const existingProfile = await this.playerRepo.findProfile(playerId); 
+    
+    if (!existingProfile) {
+      // 2. Step 2: Fallback to creating a new profile if the ID doesn't exist
+      console.log(`✨ Creating a clean skeleton profile for new Player ID: ${playerId} with Discord tag link.`);
+      
+      await this.playerRepo.saveProfile({
+        _id: playerId,
+        nicknames: [], // Empty initially; will fill when they show up on scoreboards
+        discordProfile: discordId, // Store the linked profile ID string directly
+        careerStats: {
+          goals: 0,
+          assists: 0,
+          saves: 0,
+          passes: 0,
+          interceptions: 0,
+          matchesPlayed: 0
+        }
+      });
+      
+      return { isNew: true };
+    }
+
+    // 3. Step 3: Update the player row with the correct discord profile id
+    // Note: Assuming you add an update field method or can utilize your save/update pipeline
+    console.log(`✨ Updating existing Player ID: ${playerId} with Discord Profile ID: ${discordId}`);
+    await this.playerRepo.updateDiscordProfile(playerId, discordId);
+    
+    return { isNew: false };
   }
 }

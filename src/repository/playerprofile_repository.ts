@@ -50,4 +50,13 @@ export class PlayerProfileRepository {
       }
     );
   }
+
+  async updateDiscordProfile(playerId:number, discordId:string) {
+    await this.collection.updateOne(
+      {_id: playerId},
+      {
+        $set: {discordProfile:discordId}
+      }
+    )
+  }
 }
