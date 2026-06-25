@@ -17,13 +17,26 @@ async function runSeed() {
   await getDb().collection('matches').deleteMany({});             // Wipes general match metadata
   await getDb().collection('match_performances').deleteMany({});   // Wipes player stat lines
 
-  const TARGET_PLAYER_ID = 24; 
-  
+  const TARGET_PLAYER_ID = -1; 
+
+  const barPlayersToSeed = [
+    { id: 21, nicks: ['allauni', 'allaunigk', 'barallauni', 'barallaunigk'] },
+    { id: 22, nicks: ['totallysilv', 'totallysilvgk', 'bargktotallysilv'] },
+    { id: 23, nicks: ['velops', 'velopsgk', 'barvelops', 'barvelopsgk'] },
+    { id: 24, nicks: ['zomu', 'barzomu'] },
+    { id: 25, nicks: ['maxfort', 'barmaxfort'] }
+  ];
+    
+  // 1. Define the fresh Master Player Record with clean career baseline stats
+ // Loop through each player configuration sequentially
+for (const playerData of barPlayersToSeed) {
+  const currentId = playerData.id;
+
   // 1. Define the fresh Master Player Record with clean career baseline stats
   const masterProfile = {
-    _id: TARGET_PLAYER_ID,
-    nicknames: ['allauni', 'allaunigk'],
-    discordProfile: '28394019283749201',
+    _id: currentId,
+    nicknames: playerData.nicks,
+    discordProfile: '', // Stays empty until they run !register
     careerStats: {
       goals: 0,
       assists: 0,
@@ -34,17 +47,21 @@ async function runSeed() {
     }
   };
 
-  console.log(`💾 Writing master profile record for ID: ${TARGET_PLAYER_ID}`);
+  console.log(`💾 Writing master profile record for ID: ${currentId}`);
   await playerRepo.saveProfile(masterProfile);
 
   // 2. Build the inverted lookup indexes for name matching
   for (const nick of masterProfile.nicknames) {
-    console.log(`🔗 Linking lookup key [${nick}] ➔ Player ID: ${TARGET_PLAYER_ID}`);
-    await nicknameRepo.registerNickname(nick, TARGET_PLAYER_ID);
+      console.log(`🔗 Linking lookup key [${nick}] ➔ Player ID: ${currentId}`);
+      await nicknameRepo.registerNickname(nick, currentId);
+    }
   }
 
+  console.log('✅ Seeding complete! 5 player profiles and their lookup keys have been written.')
+
+  
   // 3. Provision the immutable Mock Match history entries
-  const MOCK_MATCH_ID = 'game_1';
+  const MOCK_MATCH_ID = 'test_game_1';
   console.log(`🎬 Provisioning mock match history entry [${MOCK_MATCH_ID}]...`);
 
   // Insert general match event mapping

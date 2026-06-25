@@ -10,9 +10,11 @@ export interface NicknameDocument {
   playerId: number;  
 }
 
+const MONGO_NICKNAME_DB_NAME = 'nicknames';
+
 export class NicknameMappingRepository {
   private get collection() {
-    return getDb().collection<NicknameDocument>('nicknames');
+    return getDb().collection<NicknameDocument>(MONGO_NICKNAME_DB_NAME);
   }
 
   /**

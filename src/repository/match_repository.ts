@@ -2,9 +2,11 @@
 import { getDb } from '../services/db.js';
 import { Match } from '../entity/match.js';
 
+const MONGO_MATCHES_NAME_DB = 'matches';
+
 export class MatchRepository {
   private get collection() {
-    return getDb().collection<Match>('matches');
+    return getDb().collection<Match>(MONGO_MATCHES_NAME_DB);
   }
 
   /**

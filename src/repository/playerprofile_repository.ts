@@ -10,9 +10,11 @@ export interface IncomingMatchDelta {
   interceptions: number;
 }
 
+const MONGO_PLAYERS_DB_NAME = 'players';
+
 export class PlayerProfileRepository {
   private get collection() {
-    return getDb().collection<PlayerProfile>('players');
+    return getDb().collection<PlayerProfile>(MONGO_PLAYERS_DB_NAME);
   }
 
   async findProfile(playerId: number): Promise<PlayerProfile | null> {
@@ -79,5 +81,12 @@ export class PlayerProfileRepository {
         } 
       }
     );
+  }
+
+  /**
+   * Fetches all player profiles from the database
+   */
+  async getAllProfiles(): Promise<PlayerProfile[]> {
+    return await this.collection.find({}).toArray();
   }
 }

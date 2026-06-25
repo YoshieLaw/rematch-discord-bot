@@ -16,6 +16,7 @@ import { Match } from './entity/match.js';
 const matchRepo = new MatchRepository();
 const performanceRepo = new MatchPerformanceRepository();
 
+
 // Initilize Services
 const playerService = new PlayerService();
 const imageService = new ImageProcessingService();
@@ -67,35 +68,51 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
 
   // Parsed Stats Test
   if (command.startsWith('!submit')) {
-    const attachment = message.attachments.first();
+  // 1. Collect all attachments that are valid images
+  const validAttachments = message.attachments.filter(att => att.contentType?.startsWith('image/'));
 
-    // checks if there is a screenshot included in the message
-    if (!attachment || !attachment.contentType?.startsWith('image/')) {
-      await message.reply('❌ Please attach a screenshot file alongside your `!submit` command.');
-      return;
-    }
-    
-    // checks if the screenshot has already been submitted 
-    const imageHash = await getValidatedScreenshotHash(message, attachment);
-    if (imageHash === null) {
-      return; // Exit out early, helper already replied to the user about duplicate
-    }
+  // Checks if at least one image was included
+  if (validAttachments.size === 0) {
+    await message.reply('❌ Please attach at least one screenshot file alongside your `!submit` command.');
+    return;
+  }
 
-    let statusMessage: Message | null = null;
-    try {
-      // 1 - Make the call to OCR endpoint
-      statusMessage = await message.reply('⏳ Step 1/5: Fetching raw OCR text matrix...');
-      const rawTextOutput = await ocrProvider.extractTextFromUrl(attachment.url);
-      // 2 - Parse the player logic out of it (const parsedPlayers = parseOcrTable(rawTextOutput);)
-      await statusMessage.edit('⏳ Step 2/5: Mapping tokens through parser implementation...');
-      const parsedPlayers = parseOcrTable(rawTextOutput);
-      // 3 - Save the players data to the player by updating their career stats in the player profile
-      await statusMessage.edit('⏳ Step 3/5: Saving players and updating their career stats...');
-      const playerIdentityMap = await playerService.processMatchPlayers(parsedPlayers);
-      // 4 - Then save all the player's match performances to the match performance repo/table
-      await statusMessage.edit('⏳ Step 4/5: Saving match and all player performances...');
-      const attachmentName = attachment.name;
+  // Create a single tracking message to keep the chat clean
+  const statusMessage = await message.reply(`⏳ Initializing processing for **${validAttachments.size}** screenshot(s)...`);
+  
+  let successCount = 0;
+  let skippedCount = 0;
+
+  try {
+    // 2. Loop through every single attachment sequentially
+    for (const [attachmentId, attachment] of validAttachments) {
+      const attachmentName = attachment.name || `unknown_${attachmentId}`;
       const matchId = attachmentName.split(".")[0];
+      
+      await statusMessage.edit(`⏳ **[File: ${attachmentName}]** Step 1/5: Checking for duplicates & validating hash...`);
+
+      // Checks if the screenshot has already been submitted 
+      const imageHash = await getValidatedScreenshotHash(message, attachment);
+      if (imageHash === null) {
+        // Skip this specific screenshot since the helper already warned the user about a duplicate
+        skippedCount++;
+        continue; 
+      }
+
+      // Step 1 - Make the call to OCR endpoint
+      await statusMessage.edit(`⏳ **[File: ${attachmentName}]** Step 1/5: Fetching raw OCR text matrix...`);
+      const rawTextOutput = await ocrProvider.extractTextFromUrl(attachment.url);
+      
+      // Step 2 - Parse the player logic out of it
+      await statusMessage.edit(`⏳ **[File: ${attachmentName}]** Step 2/5: Mapping tokens through parser implementation...`);
+      const parsedPlayers = parseOcrTable(rawTextOutput);
+      
+      // Step 3 - Save the players data to the player by updating their career stats in the player profile
+      await statusMessage.edit(`⏳ **[File: ${attachmentName}]** Step 3/5: Saving players and updating their career stats...`);
+      const playerIdentityMap = await playerService.processMatchPlayers(parsedPlayers);
+      
+      // Step 4 - Then save all the player's match performances to the match performance repo/table
+      await statusMessage.edit(`⏳ **[File: ${attachmentName}]** Step 4/5: Saving match and all player performances...`);
 
       for (const row of parsedPlayers) {
         // Retrieve the resolved numerical unique ID from our identity map using their raw username
@@ -119,8 +136,9 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
           console.warn(`⚠️ Warning: Player identity map missing a reference for username: ${row.username}`);
         }
       }
-      // 5 - Lock down the master match so it can't be uploaded again
-      await statusMessage.edit('⏳ Step 5/5: Finishing up final steps...');
+
+      // Step 5 - Lock down the master match so it can't be uploaded again
+      await statusMessage.edit(`⏳ **[File: ${attachmentName}]** Step 5/5: Finishing up final steps...`);
 
       const matchData: Match = {
         _id: matchId,              // Unique file identifier
@@ -128,23 +146,27 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
         imageHash: imageHash,       // Fixed: Passing down the unique hash signature generated in the helper!
         uploadedAt: new Date(),     
         uploadedBy: message.author.id, 
-      }
+      };
 
       // Commit the parent record to the 'matches' collection
       await matchRepo.createMatchIfNew(matchData);
-
-      // Update the status message one last time to signal a successful write across the board!
-      await  statusMessage.edit(`✅ Match data safely ingested! Verified player profiles, historical performance cards, and the master match lock have been updated.`);
       
-    } catch (error) {
-      console.error('Manual comparison execution failed:', error);
-      if (statusMessage) {
-        await statusMessage.edit('❌ Processing failed. Check your local application console logs.');
-      } else {
-        await message.reply('❌ Processing failed during initialization. Check console logs.');
-      }
+      successCount++;
     }
+
+    // 3. Final completion status across all processed files
+    let finalResponse = `✅ **Processing Complete!**\n• Successfully processed **${successCount}** match screenshots.`;
+    if (skippedCount > 0) {
+      finalResponse += `\n• Skipped **${skippedCount}** duplicate screenshots.`;
+    }
+
+    await statusMessage.edit(finalResponse);
+    
+  } catch (error) {
+    console.error('Manual comparison execution failed:', error);
+    await statusMessage.edit('❌ Processing failed mid-execution. Check your local application console logs.');
   }
+}
 
   // Register Discord Profile to Player ID command
   if (command.startsWith('!registerExistingPlayer')) {
@@ -227,6 +249,71 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
     } catch (error) {
       console.error('Failed to append player nickname records:', error);
       await message.reply('❌ An internal error occurred while trying to save the nickname updates.');
+    }
+  }
+
+  // Leaderboard Command
+  if (command.startsWith('!leaderboard')) {
+    const args = message.content.slice(1).trim().split(/ +/);
+    
+    // 1. Map out all 5 valid sorting metrics
+    const validMetrics = ['goals', 'assists', 'saves', 'passes', 'interceptions'] as const;
+    type MetricType = typeof validMetrics[number];
+
+    let metric: MetricType = 'goals';
+    const inputMetric = args[1]?.toLowerCase();
+
+    if (validMetrics.includes(inputMetric as any)) {
+      metric = inputMetric as MetricType;
+    }
+
+    try {
+      const players = await playerService.getAllPlayers();
+
+      if (players.length === 0) {
+        await message.reply('ℹ️ No player profiles found to display on the leaderboard.');
+        return;
+      }
+
+      // 2. Sort players descending based on chosen metric
+      players.sort((a, b) => (b.careerStats[metric] || 0) - (a.careerStats[metric] || 0));
+
+      // 3. Slice to Top 15 to stay safely under Discord's 2000 character ceiling
+      const topPlayers = players.slice(0, 15);
+
+      // 4. Build an expanded layout showing ALL stats side-by-side
+      let leaderboardText = `🏆 **TOP 15 CAREER LEADERBOARD (${metric.toUpperCase()})** 🏆\n`;
+      leaderboardText += '```\n';
+      leaderboardText += 'Rank | Name         | Goals | Assist | Saves | Pass  | Int   \n';
+      leaderboardText += '-------------------------------------------------------------\n';
+
+      topPlayers.forEach((player, index) => {
+        const rank = (index + 1).toString().padEnd(4, ' ');
+        
+        const nameStr = player.nicknames && player.nicknames.length > 0 
+          ? player.nicknames[0] 
+          : `Player ${player._id}`;
+        const name = nameStr.substring(0, 12).padEnd(12, ' ');
+
+        // Extract all 5 fields safely with fallbacks
+        const g = (player.careerStats.goals || 0).toString().padEnd(5, ' ');
+        const a = (player.careerStats.assists || 0).toString().padEnd(6, ' ');
+        const s = (player.careerStats.saves || 0).toString().padEnd(5, ' ');
+        const p = (player.careerStats.passes || 0).toString().padEnd(5, ' ');
+        const i = (player.careerStats.interceptions || 0).toString().padEnd(5, ' ');
+
+        leaderboardText += `${rank} | ${name} | ${g} | ${a} | ${s} | ${p} | ${i}\n`;
+      });
+
+      leaderboardText += '```\n';
+      leaderboardText += `*Filter using: \`!leaderboard goals\`, \`assists\`, \`saves\`, \`passes\`, or \`interceptions\`*`;
+
+      // 5. Safely ship it to Discord
+      await message.reply(leaderboardText);
+
+    } catch (error) {
+      console.error('Failed to generate leaderboard:', error);
+      await message.reply('❌ An error occurred while rendering the leaderboard.');
     }
   }
   

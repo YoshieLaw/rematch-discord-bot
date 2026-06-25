@@ -206,4 +206,12 @@ export class PlayerService {
       addedCount: newNicksToRegister.length
     };
   }
+
+  /**
+   * Retrieves all registered player profiles from the underlying repository.
+   * @returns Array of master player profile documents
+   */
+  async getAllPlayers(): Promise<PlayerProfile[]> {
+    return await this.playerRepo.getAllProfiles();
+  }
 }
