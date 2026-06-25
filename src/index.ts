@@ -15,15 +15,10 @@ import { Match } from './entity/match.js';
 // Initialize our repository management pool
 const matchRepo = new MatchRepository();
 const performanceRepo = new MatchPerformanceRepository();
-const playerRepo = new PlayerProfileRepository();
-const nicknameRepo = new NicknameMappingRepository();
 
 // Initilize Services
 const playerService = new PlayerService();
 const imageService = new ImageProcessingService();
-
-// Extract operational configuration flags
-const IS_DUPLICATE_CHECK_ENABLED = process.env.DUPLICATE_CHECK_ENABLED === 'true';
 
 // Instantiate the provider service once at system boot
 const ocrProvider = new OcrDataProvider();
@@ -152,12 +147,12 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
   }
 
   // Register Discord Profile to Player ID command
-  if (command.startsWith('!register')) {
+  if (command.startsWith('!registerExistingPlayer')) {
     // 1. Remove the prefix and separate the command and arguments
     const args = message.content.slice(1).trim().split(/ +/);
 
     if (args.length !== 3) {
-      await message.reply('❌ Please make sure there are only 2 parameters passed into the `!register` command.');
+      await message.reply('❌ Please make sure there are only 2 parameters passed into the `!registerExistingPlayer` command.');
       return;
     }
     const discordInput:string = args[1];
@@ -192,6 +187,46 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
     } catch (error) {
       console.error('Failed to register Discord profile link:', error);
       await message.reply('❌ An internal database error occurred while trying to save the registration.');
+    }
+  }
+
+  // Register Nicknames to a Player or Discord Profile Command
+  if (command.startsWith('!nickname')) {
+    const args = message.content.slice(1).trim().split(/ +/);
+
+    // Validation check: command + identifier + at least 1 nickname = length 3 minimum
+    if (args.length < 3) {
+      await message.reply('❌ **Invalid Usage:** Use `!nickname <@User or PlayerId> <nickname1> <nickname2> ...`');
+      return;
+    }
+
+    const identityInput = args[1];
+    // Gather all tokens from index 2 onwards as the list of nicknames
+    const nicknamesList = args.slice(2); 
+
+    // Clean raw input parameter down if it happens to be a Discord Mention tag 
+    const discordIdRegex = /^<@!?(\d+)>$/;
+    const match = identityInput.match(discordIdRegex);
+    const TargetIdentifier = match ? match[1] : identityInput;
+
+    try {
+      // Pass the identifier and array directly over to the service layer
+      const result = await playerService.addPlayerNicknames(TargetIdentifier, nicknamesList);
+
+      if (!result) {
+        await message.reply(`❌ **Profile Not Found:** Could not locate a player matching identifier token: \`${identityInput}\``);
+        return;
+      }
+
+      if (result.addedCount === 0) {
+        await message.reply(`ℹ️ All provided nicknames are already registered to Player ID \`${result.updatedProfile._id}\`.`);
+      } else {
+        await message.reply(`✅ **Nicknames Updated:** Successfully added **${result.addedCount}** new nickname(s) to Player ID \`${result.updatedProfile._id}\` and updated mapping records.`);
+      }
+
+    } catch (error) {
+      console.error('Failed to append player nickname records:', error);
+      await message.reply('❌ An internal error occurred while trying to save the nickname updates.');
     }
   }
   

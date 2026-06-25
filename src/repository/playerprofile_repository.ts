@@ -51,12 +51,33 @@ export class PlayerProfileRepository {
     );
   }
 
-  async updateDiscordProfile(playerId:number, discordId:string) {
+  async updateDiscordProfile(playerId:number, discordId:string): Promise<void> {
     await this.collection.updateOne(
       {_id: playerId},
       {
         $set: {discordProfile:discordId}
       }
     )
+  }
+
+  async findProfileByDiscordId(discordId: string): Promise<PlayerProfile | null> {
+    return await this.collection.findOne({ discordProfile: discordId });
+  }
+
+  /**
+   * Appends an array of new unique nicknames to an existing player profile document.
+   * Uses $addToSet to prevent duplicate strings within the document's array field.
+   * * @param playerId The internal unique numerical ID (_id) of the player
+   * @param newNicknames An array of cleaned, normalized lowercase nicknames to append
+   */
+  async addNicknamesToProfile(playerId: number, newNicknames: string[]): Promise<void> {
+    await this.collection.updateOne(
+      { _id: playerId },
+      { 
+        $addToSet: { 
+          nicknames: { $each: newNicknames } 
+        } 
+      }
+    );
   }
 }

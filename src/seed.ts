@@ -49,9 +49,9 @@ async function runSeed() {
 
   // Insert general match event mapping
   await getDb().collection('matches').insertOne({
-    _id: 'game_1',
-    fileName: 'game_1.png',
-    imageHash: '956a934cbfa6e933611814a20fcff3da55cd1586c65bf596e90020a930d7c042',
+    _id: 'test_game_1',
+    fileName: 'test_game_1.png',
+    imageHash: '956a934cbfa6e933611814a20fcaaff3da55cd1586c65bf596e90020a930d7c042',
     uploadedAt: new Date(),
     uploadedBy: '28394019283749201' 
   });

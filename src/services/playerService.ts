@@ -1,5 +1,6 @@
 import { PlayerProfileRepository } from '../repository/playerprofile_repository.js';
 import { NicknameMappingRepository } from '../repository/nickname_repository.js';
+import { PlayerProfile } from '../entity/player_profile.js';
 import { getDb } from '../services/db.js';
 import { PlayerStats } from '../entity/player_stats.js';
 
@@ -28,30 +29,42 @@ export class PlayerService {
       // 2. Query our inverted lookup table to find an existing Master Player ID
       let playerId = await this.nicknameRepo.findPlayerId(normalizedNick);
 
-      // 3. Fallback: If no mapping exists, create a brand-new player identity
+      // 3. Do a check with the if the nickname has a regex pattern match to another existing nickname
+      // If not, create a new profile
       if (playerId === null) {
-        console.log(`✨ Unrecognized identity found for "${playerRow.username}". Generating new profile...`);
         
-        // Generate a new sequential unique integer ID using MongoDB atomic counters
-        playerId = await this.getNextSequenceId('player_id_sequence');
+        playerId = await this.nicknameRepo.findFuzzyPlayerId(normalizedNick);
 
-        // Initialize a clean, empty master profile for them
-        await this.playerRepo.saveProfile({
-          _id: playerId,
-          nicknames: [normalizedNick],
-          discordProfile: '', // To be optionally linked by the user later via an account link command
-          careerStats: {
-            goals: 0,
-            assists: 0,
-            saves: 0,
-            passes: 0,
-            interceptions: 0,
-            matchesPlayed: 0
-          }
-        });
+        if (playerId !== null) {
+          console.log(`🎯 Fuzzy identity link discovered! "${playerRow.username}" matched to existing Player ID: ${playerId}`);
+          
+          // Auto-register this new structural variation so next time it runs instantly via exact match
+          await this.playerRepo.addNicknamesToProfile(playerId, [normalizedNick]);
+          await this.nicknameRepo.registerNickname(normalizedNick, playerId);
+        } else {
+          console.log(`✨ Unrecognized identity found for "${playerRow.username}". Generating new profile...`);
+          
+          // Generate a new sequential unique integer ID using MongoDB atomic counters
+          playerId = await this.getNextSequenceId('player_id_sequence');
 
-        // Register their initial nickname mapping so future matches find this ID
-        await this.nicknameRepo.registerNickname(normalizedNick, playerId);
+          // Initialize a clean, empty master profile for them
+          await this.playerRepo.saveProfile({
+            _id: playerId,
+            nicknames: [normalizedNick],
+            discordProfile: '', // To be optionally linked by the user later via an account link command
+            careerStats: {
+              goals: 0,
+              assists: 0,
+              saves: 0,
+              passes: 0,
+              interceptions: 0,
+              matchesPlayed: 0
+            }
+          });
+
+          // Register their initial nickname mapping so future matches find this ID
+          await this.nicknameRepo.registerNickname(normalizedNick, playerId);
+        }
       }
 
       // 4. Update their cumulative lifetime career statistics atomically
@@ -137,5 +150,60 @@ export class PlayerService {
     await this.playerRepo.updateDiscordProfile(playerId, discordId);
     
     return { isNew: false };
+  }
+
+  /**
+   * Finds a player profile by either Player ID or Discord ID, appends unique 
+   * new nicknames, and registers those mappings in the nicknames database.
+   * * @param identifier Can be a numeric string Player ID or a numeric string Discord ID
+   * @param rawNicknames Array of new nicknames to attach
+   * @returns Object with the updated profile, or null if no profile was found
+   */
+  async addPlayerNicknames(identifier: string, rawNicknames: string[]): Promise<{ updatedProfile: any; addedCount: number } | null> {
+    let masterProfile: PlayerProfile | null = null;
+
+    // 1. Differentiate between an internal Player ID and a Discord Snowflake
+    // If it's a long Snowflake string (typically 17-19 digits), look it up via the new repo method
+    if (/^\d+$/.test(identifier) && identifier.length >= 17) {
+      masterProfile = await this.playerRepo.findProfileByDiscordId(identifier);
+    } else {
+      // Otherwise, treat it as your sequential base-10 numerical Player ID
+      const playerId:number = parseInt(identifier, 10);
+      if (!isNaN(playerId)) {
+        masterProfile = await this.playerRepo.findProfile(playerId); // Uses your existing find helper
+      }
+    }
+
+    // If no profile could be located by either lookup strategy, bail out early
+    if (!masterProfile) return null;
+
+    const playerId:number = masterProfile._id;
+
+    // 2. Normalize inputs down to lowercase alphanumeric strings
+    const cleanNicks:string[] = rawNicknames
+      .map(n => n.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().trim())
+      .filter(n => n.length > 0);
+
+    // 3. Filter out nicknames the player already has inside their master profile array
+    const existingNicks:string[] = masterProfile.nicknames || [];
+    const newNicksToRegister = cleanNicks.filter(n => !existingNicks.includes(n));
+
+    if (newNicksToRegister.length > 0) {
+      // Append the new nicknames atomically into the player profile document
+      await this.playerRepo.addNicknamesToProfile(playerId, newNicksToRegister)
+
+      // Insert the reverse lookup mappings inside your Inverted Index nicknames collection
+      for (const nick of newNicksToRegister) {
+        await this.nicknameRepo.registerNickname(nick, playerId);
+      }
+    }
+
+    // Fetch a fresh document snapshot to return to the command block
+    const updatedProfile = await this.playerRepo.findProfile(playerId);
+
+    return {
+      updatedProfile,
+      addedCount: newNicksToRegister.length
+    };
   }
 }
