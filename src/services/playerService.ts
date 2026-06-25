@@ -17,9 +17,15 @@ export class PlayerService {
     const nameToIdMap = new Map<string, number>();
 
     for (const playerRow of parsedPlayers) {
-      // 1. Normalize the raw name string for consistent lookups (e.g., "BAR Allauni" -> "allauni")
-      const normalizedNick = playerRow.username.toLowerCase().replace(/[^a-z0-9]/g, '');
+      // 1. Clean out standard 3-letter club prefixes (like BAR) or bracket tags, plus garbage characters
+      let cleanName = playerRow.username
+        .replace(/\b[A-Z]{3}\b/g, '') // Strips standalone 3-letter capital words like "BAR"
+        .replace(/[^a-zA-Z0-9]/g, ''); // Remove special characters, preserving numbers and letters
 
+      const normalizedNick = cleanName.toLowerCase().trim();
+      // If name is invalid or empty, skip it
+      if (!normalizedNick) continue;
+      
       // 2. Query our inverted lookup table to find an existing Master Player ID
       let playerId = await this.nicknameRepo.findPlayerId(normalizedNick);
 
