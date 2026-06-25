@@ -1,9 +1,30 @@
 // src/index.ts
-import { Client, GatewayIntentBits, Message } from 'discord.js';
+import { Attachment, Client, GatewayIntentBits, Message } from 'discord.js';
 import 'dotenv/config';
 import { parseOcrTable } from './services/parser.js';
 import { OcrDataProvider } from './services/DataProvider/ocrProvider.js';
+import { MatchRepository } from './repository/match_repository.js';
+import { MatchPerformanceRepository } from './repository/match_performance_repository.js';
+import { PlayerProfileRepository } from './repository/playerprofile_repository.js';
+import { NicknameMappingRepository } from './repository/nickname_repository.js';
+import { PlayerService } from './services/playerService.js';
+import { ImageProcessingService } from './services/imageProcessingService.js';
+import { connectDatabase } from './services/db.js';
+import { Match } from './entity/match.js';
+import { match } from 'assert';
 
+// Initialize our repository management pool
+const matchRepo = new MatchRepository();
+const performanceRepo = new MatchPerformanceRepository();
+const playerRepo = new PlayerProfileRepository();
+const nicknameRepo = new NicknameMappingRepository();
+
+// Initilize Services
+const playerService = new PlayerService();
+const imageService = new ImageProcessingService();
+
+// Extract operational configuration flags
+const IS_DUPLICATE_CHECK_ENABLED = process.env.DUPLICATE_CHECK_ENABLED === 'true';
 
 // Instantiate the provider service once at system boot
 const ocrProvider = new OcrDataProvider();
@@ -20,6 +41,26 @@ client.once('ready', (readyClient) => {
   console.log(`✅ Success! Parser Testing Bot is online as: ${readyClient.user.tag}`);
 });
 
+/**
+ * Helper method to check if a screenshot is valid for processing.
+ * @returns true if the screenshot is new and safe to process; false if it's a duplicate.
+ */
+async function getValidatedScreenshotHash(message: any, attachment: Attachment): Promise<string | null> {
+  const IS_DUPLICATE_CHECK_ENABLED = process.env.DUPLICATE_CHECK_ENABLED === 'true';
+  const imageHash = await imageService.generateImageHash(attachment.url);
+
+  if (IS_DUPLICATE_CHECK_ENABLED) {
+    
+    const existingMatch = await matchRepo.findByHash(imageHash); 
+      if (existingMatch) {
+        await message.reply('⚠️ This exact screenshot has already been processed and logged!');
+        return null;
+      }
+  }
+
+  return imageHash; 
+}
+
 client.on('messageCreate', async (message: Message): Promise<void> => {
   if (message.author.bot) return;
 
@@ -33,34 +74,81 @@ client.on('messageCreate', async (message: Message): Promise<void> => {
   // Parsed Stats Test
   if (command.startsWith('!submit')) {
     const attachment = message.attachments.first();
+
+    // checks if there is a screenshot included in the message
     if (!attachment || !attachment.contentType?.startsWith('image/')) {
       await message.reply('❌ Please attach a screenshot file alongside your `!submit` command.');
       return;
     }
+    
+    // checks if the screenshot has already been submitted 
+    const imageHash = await getValidatedScreenshotHash(message, attachment);
+    if (imageHash === null) {
+      return; // Exit out early, helper already replied to the user about duplicate
+    }
 
-    const statusMessage = await message.reply('⏳ Step 1/2: Fetching raw OCR text matrix...');
-
+    let statusMessage: Message | null = null;
     try {
-      // 1. Extract the raw text directly from the API response
+      // 1 - Make the call to OCR endpoint
+      statusMessage = await message.reply('⏳ Step 1/5: Fetching raw OCR text matrix...');
       const rawTextOutput = await ocrProvider.extractTextFromUrl(attachment.url);
-      
-      await statusMessage.edit('⏳ Step 2/2: Mapping tokens through parser implementation...');
-
-      // 2. Pass the text to your sliding-window parsing logic
+      // 2 - Parse the player logic out of it (const parsedPlayers = parseOcrTable(rawTextOutput);)
+      await statusMessage.edit('⏳ Step 2/5: Mapping tokens through parser implementation...');
       const parsedPlayers = parseOcrTable(rawTextOutput);
+      // 3 - Save the players data to the player by updating their career stats in the player profile
+      await statusMessage.edit('⏳ Step 3/5: Saving players and updating their career stats...');
+      const playerIdentityMap = await playerService.processMatchPlayers(parsedPlayers);
+      // 4 - Then save all the player's match performances to the match performance repo/table
+      await statusMessage.edit('⏳ Step 4/5: Saving match and all player performances...');
+      const attachmentName = attachment.name;
+      const matchId = attachmentName.split(".")[0];
 
-      // 3. Construct the dual comparison payload blocks
-      const parsedJsonSegment = `📊 **POST-PARSED RESULT OBJECTS ARRAY:**\n\`\`\`json\n${JSON.stringify(parsedPlayers, null, 2)}\n\`\`\``;
+      for (const row of parsedPlayers) {
+        // Retrieve the resolved numerical unique ID from our identity map using their raw username
+        const targetPlayerId = playerIdentityMap.get(row.username);
 
-      // Clean up the initial status message wrapper
-      await statusMessage.delete().catch(() => {});
+        if (targetPlayerId !== undefined) {
+          // Log this snapshot performance card directly into the match_performances ledger
+          await performanceRepo.recordMatch({
+            matchId: matchId, // Derived from attachment name, e.g., "game_1"
+            playerId: targetPlayerId,
+            timestamp: new Date(),
+            goals: row.goals,
+            assists: row.assists,
+            saves: row.saves,
+            passes: row.passes,
+            interceptions: row.interceptions
+          });
+          
+          console.log(`📊 Logged match performance card for player ID [${targetPlayerId}] (Match: ${matchId})`);
+        } else {
+          console.warn(`⚠️ Warning: Player identity map missing a reference for username: ${row.username}`);
+        }
+      }
+      // 5 - Lock down the master match so it can't be uploaded again
+      await statusMessage.edit('⏳ Step 5/5: Finishing up final steps...');
 
-      // Send the raw data blocks sequentially to bypass Discord's 2000 character limit ceiling safely
-      await message.channel.send(parsedJsonSegment);
+      const matchData: Match = {
+        _id: matchId,              // Unique file identifier
+        fileName: attachmentName,   // Filename
+        imageHash: imageHash,       // Fixed: Passing down the unique hash signature generated in the helper!
+        uploadedAt: new Date(),     
+        uploadedBy: message.author.id, 
+      }
 
+      // Commit the parent record to the 'matches' collection
+      await matchRepo.createMatchIfNew(matchData);
+
+      // Update the status message one last time to signal a successful write across the board!
+      await  statusMessage.edit(`✅ Match data safely ingested! Verified player profiles, historical performance cards, and the master match lock have been updated.`);
+      
     } catch (error) {
       console.error('Manual comparison execution failed:', error);
-      await statusMessage.edit('❌ Processing failed. Check your local application console logs.');
+      if (statusMessage) {
+        await statusMessage.edit('❌ Processing failed. Check your local application console logs.');
+      } else {
+        await message.reply('❌ Processing failed during initialization. Check console logs.');
+      }
     }
   }
 });
@@ -71,3 +159,21 @@ if (!process.env.DISCORD_TOKEN) {
 }
 
 client.login(process.env.DISCORD_TOKEN);
+async function startBot() {
+  try {
+    // 1. Force the database connection to complete FIRST
+    console.log('🗄️ Connecting to MongoDB Atlas...');
+    await connectDatabase();
+    console.log('✅ Database connected successfully!');
+
+    // 2. ONLY THEN log your Discord client in
+    await client.login(process.env.DISCORD_TOKEN);
+    
+  } catch (error) {
+    console.error('❌ Failed to launch the application safely:', error);
+    process.exit(1);
+  }
+}
+
+// Fire the initialization routine
+startBot();
