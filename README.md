@@ -59,8 +59,14 @@ npm install
 ### 2. Environment Configuration
 Create a .env file in the root directory of your project and paste your keys exactly like this:
 ```bash
+# Discord Bot Configuration
 DISCORD_TOKEN=your_discord_bot_token_here
-OCR_API_KEY=your_ocr_space_api_key_here
+
+# Database Configuration
+MONGO_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/rematch_db?retryWrites=true&w=majority
+
+# OCR Provider Configuration
+OCR_API_KEY=your_ocr_space_or_provider_key_here
 ```
 
 ## 🚀 Step 3: Run the Bot
